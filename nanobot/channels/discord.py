@@ -55,6 +55,7 @@ class DiscordChannel(BaseChannel):
         self._heartbeat_task: asyncio.Task | None = None
         self._typing_tasks: dict[str, asyncio.Task] = {}
         self._http: httpx.AsyncClient | None = None
+        self._bot_user_id: str | None = None
 
     async def start(self) -> None:
         """Start the Discord gateway connection."""
@@ -170,7 +171,9 @@ class DiscordChannel(BaseChannel):
                 await self._start_heartbeat(interval_ms / 1000)
                 await self._identify()
             elif op == 0 and event_type == "READY":
-                logger.info("Discord gateway READY")
+                user = (payload or {}).get("user") or {}
+                self._bot_user_id = str(user.get("id", ""))
+                logger.info(f"Discord gateway READY (bot_user_id={self._bot_user_id})")
             elif op == 0 and event_type == "MESSAGE_CREATE":
                 await self._handle_message_create(payload)
             elif op == 7:
@@ -233,6 +236,13 @@ class DiscordChannel(BaseChannel):
 
         if not self.is_allowed(sender_id):
             return
+
+        # require_mention: skip messages in guild channels that don't @mention the bot
+        if self.config.require_mention and payload.get("guild_id"):
+            mentions = payload.get("mentions") or []
+            mentioned = any(str(m.get("id")) == self._bot_user_id for m in mentions)
+            if not mentioned:
+                return
 
         content_parts = [content] if content else []
         media_paths: list[str] = []
